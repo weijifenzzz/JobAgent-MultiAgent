@@ -47,7 +47,7 @@ def supervisor_node(state):
     # 如果有后续任务，直接执行
     if state.get("needs_followup"):
         next_action = state["needs_followup"]
-        state["needs_followup"] = ""  # 清除后续任务标记
+        state["needs_followup"] = ""  # 把这条待执行安排消费掉，避免以后重复使用
         print(f"执行后续任务: {next_action}")
         state["next_step"] = next_action
         return state
@@ -310,7 +310,7 @@ def define_graph():
             "CoverLetterGenerator": "CoverLetterGenerator",
             "WebResearcher": "WebResearcher",
             "ChatBot": "ChatBot",
-            "Finish": END
+            "Finish": "ChatBot"  # 先生成结束语，再由 ChatBot 的条件边结束
         }
     )
     

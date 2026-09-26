@@ -518,10 +518,12 @@ def execute_chat_conversation(user_input, graph):
             st.session_state["is_processing"] = False
             return "⚠️ 执行已被用户停止"
         
-        # 🔴 优化：简化消息处理
+        # 记录本轮输入边界，避免把用户输入或历史回答当成本轮回复。
+        input_messages = list(message_history.messages) + [HumanMessage(content=user_input)]
+        input_message_count = len(input_messages)
         output = graph.invoke(
             {
-                "messages": list(message_history.messages) + [HumanMessage(content=user_input)],
+                "messages": input_messages,
                 "user_input": user_input,
                 "config": settings,
                 "callback": callback_handler,
@@ -556,13 +558,19 @@ def execute_chat_conversation(user_input, graph):
             
             st.markdown(" → ".join([f"{emoji} {agent}" for emoji, agent in zip(agent_emojis, agent_sequence)]))
         
-        # 🔴 优化：简化消息提取
-        message_output = output.get("messages")[-1]
-        messages_list = output.get("messages")
+        # 只从本轮新增消息中选取 AI 回答，不能直接显示最后一条消息。
+        messages_list = output.get("messages", [])
+        new_messages = messages_list[input_message_count:]
+        message_output = next(
+            (msg for msg in reversed(new_messages) if isinstance(msg, AIMessage)),
+            None,
+        )
         message_history.clear()
         message_history.add_messages(messages_list)
         
         st.session_state["is_processing"] = False
+        if message_output is None or not message_output.content:
+            return "本轮未生成助手回复，请重新提问。"
         return message_output.content
 
     except Exception as exc:
