@@ -1,0 +1,16 @@
+# 本地密钥
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# 临时文件、配置和个人简历
+temp/
+
+# IDE 和 Python 缓存
+.idea/
+__pycache__/
+*.py[cod]
+
+# 本地虚拟环境
+.venv/
