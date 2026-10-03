@@ -1,10 +1,11 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import SystemMessage
 from members import get_team_members_details
 from prompts import get_supervisor_prompt_template, get_finish_step_prompt
 
 
-def get_supervisor_chain(llm: BaseChatModel):
+def get_supervisor_chain(llm: BaseChatModel, memory_context=""):
     """
     简化的 supervisor chain，直接返回文本结果
     """
@@ -21,6 +22,8 @@ def get_supervisor_chain(llm: BaseChatModel):
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
+        # 使用消息对象，记忆 JSON 的花括号不会被当成模板占位符。
+        *([SystemMessage(content=memory_context)] if memory_context else []),
         MessagesPlaceholder(variable_name="messages"),
         (
             "system",
@@ -44,12 +47,13 @@ def get_supervisor_chain(llm: BaseChatModel):
     return prompt | llm
 
 
-def get_finish_chain(llm: BaseChatModel):
+def get_finish_chain(llm: BaseChatModel, memory_context=""):
     """
     完成对话的链
     """
     system_prompt = get_finish_step_prompt()
     prompt = ChatPromptTemplate.from_messages([
+        *([SystemMessage(content=memory_context)] if memory_context else []),
         MessagesPlaceholder(variable_name="messages"),
         ("system", system_prompt),
     ])

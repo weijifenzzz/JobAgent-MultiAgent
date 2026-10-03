@@ -7,6 +7,9 @@ def get_llm(provider="tongyi", model="qwen-turbo", **kwargs):
     Returns an instance of the specified chat model provider with tool support.
     """
     #print(f"创建 LLM: provider={provider}, model={model}")
+    # 不显式传入默认 False，让 LangGraph 的 messages 流回调自动启用流式。
+    # 调用方明确指定 streaming 时，仍尊重其选择。
+    streaming_options = {"streaming": kwargs["streaming"]} if "streaming" in kwargs else {}
     
     if provider == "tongyi":
         api_key = kwargs.get("api_key") or os.environ.get("DASHSCOPE_API_KEY")
@@ -18,7 +21,7 @@ def get_llm(provider="tongyi", model="qwen-turbo", **kwargs):
             model_name=model,
             dashscope_api_key=api_key,
             temperature=kwargs.get("temperature", 0.3),
-            streaming=kwargs.get("streaming", False),
+            **streaming_options,
         )
         
         # 验证模型是否支持工具调用
@@ -39,7 +42,7 @@ def get_llm(provider="tongyi", model="qwen-turbo", **kwargs):
             api_key=api_key,
             base_url=base_url,
             temperature=kwargs.get("temperature", 0.3),
-            streaming=kwargs.get("streaming", False),
+            **streaming_options,
         )
     
     else:
@@ -48,4 +51,5 @@ def get_llm(provider="tongyi", model="qwen-turbo", **kwargs):
             model_name="qwen-turbo",
             dashscope_api_key=kwargs.get("api_key"),
             temperature=kwargs.get("temperature", 0.3),
+            **streaming_options,
         )

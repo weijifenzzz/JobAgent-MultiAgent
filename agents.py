@@ -1,11 +1,16 @@
-from typing import Any, TypedDict
+from typing import TypedDict
 from langchain.agents import create_agent
 from llms import get_llm
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 import os
 
 from langgraph.graph import StateGraph, END
+from langgraph.runtime import Runtime
+from runtime_context import RunContext
+from services.memory import handle_memory_request, memory_context, memory_intent
+from services.resumes import model_messages
 from dotenv import load_dotenv
 from chains import get_finish_chain, get_supervisor_chain
 from tools import (
@@ -26,22 +31,52 @@ from prompts import (
 load_dotenv()
 
 
-def init_chat_model(state_config):
+class AgentState(TypedDict):
+    """节点之间传递的业务数据；不包含模型密钥和运行时对象。"""
+
+    user_input: str
+    messages: list[BaseMessage]
+    next_step: str
+    task_completed: bool
+    needs_followup: str
+    resume_id: str
+    resume_filename: str
+    resume_context_start: int
+
+
+def init_chat_model(model_config):
     return get_llm(
-        provider=state_config["model_provider"],
-        model=state_config["model"],
-        dashscope_api_key=state_config.get("DASHSCOPE_API_KEY") or os.environ.get("DASHSCOPE_API_KEY"),
-        api_key=state_config.get("DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or state_config.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"),
-        base_url=state_config.get("DEEPSEEK_BASE_URL") or os.environ.get("DEEPSEEK_BASE_URL") or state_config.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_BASE_URL"),
-        temperature=state_config.get("temperature", 0.3)
+        provider=model_config["model_provider"],
+        model=model_config["model"],
+        dashscope_api_key=model_config.get("DASHSCOPE_API_KEY") or os.environ.get("DASHSCOPE_API_KEY"),
+        api_key=model_config.get("DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or model_config.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+        base_url=model_config.get("DEEPSEEK_BASE_URL") or os.environ.get("DEEPSEEK_BASE_URL") or model_config.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_BASE_URL"),
+        temperature=model_config.get("temperature", 0.3)
     )
 
 
-def supervisor_node(state):
+def memory_node(state: AgentState, runtime: Runtime[RunContext], config: RunnableConfig):
+    """明确的记忆命令直接处理；普通问题继续进入原 Supervisor 流程。"""
+    text = state.get("user_input", "")
+    if memory_intent(text) is None:
+        return {"next_step": "Supervisor"}
+    runtime.context.observer.write_agent_name("MemoryManager")
+    reply = handle_memory_request(
+        runtime.store, runtime.context.user_id, text,
+        lambda: init_chat_model(runtime.context.model_config),
+        thread_id=config.get("configurable", {}).get("thread_id"),
+    )
+    return {
+        "messages": state["messages"] + [AIMessage(content=reply, name="MemoryManager")],
+        "next_step": "__memory_done__", "task_completed": True, "needs_followup": "",
+    }
+
+
+def supervisor_node(state: AgentState, runtime: Runtime[RunContext]):
     """
     Supervisor 节点 - 支持多Agent协作
     """
-    chat_history = state.get("messages", [])
+    chat_history = model_messages(state)
     user_query = state.get("user_input", "")
     
     # 如果有后续任务，直接执行
@@ -52,10 +87,11 @@ def supervisor_node(state):
         state["next_step"] = next_action
         return state
     
-    llm = init_chat_model(state["config"])
+    llm = init_chat_model(runtime.context.model_config)
     
     if not chat_history:
         chat_history.append(HumanMessage(content=user_query))
+        state.setdefault("messages", []).append(chat_history[-1])
     
     # 分析用户查询，检测复合任务
     user_lower = user_query.lower()
@@ -84,7 +120,7 @@ def supervisor_node(state):
         
     else:
         # 单一任务，使用 supervisor chain
-        supervisor_chain = get_supervisor_chain(llm)
+        supervisor_chain = get_supervisor_chain(llm, memory_context=memory_context(runtime))
         output = supervisor_chain.invoke({"messages": chat_history})
         next_action = output.content.strip()
         
@@ -104,24 +140,23 @@ def supervisor_node(state):
     
     print(f"路由到: {next_action}")
     state["next_step"] = next_action
-    state["messages"] = chat_history
     return state
 
 
-def resume_analyzer_node(state):
+def resume_analyzer_node(state: AgentState, runtime: Runtime[RunContext]):
     """
     简历分析节点 - 支持协作模式
     """
-    llm = init_chat_model(state["config"])
+    llm = init_chat_model(runtime.context.model_config)
     
     analyzer_agent = create_agent(
-        llm, [ResumeExtractorTool(), get_google_search_results], 
-        system_prompt=get_analyzer_agent_prompt_template()
+        llm, [ResumeExtractorTool(resume_id=state.get("resume_id")), get_google_search_results],
+        system_prompt=get_analyzer_agent_prompt_template() + memory_context(runtime)
     )
     
-    state["callback"].write_agent_name(" ResumeAnalyzer Agent")
+    runtime.context.observer.write_agent_name(" ResumeAnalyzer Agent")
     
-    result = analyzer_agent.invoke({"messages": state["messages"]})
+    result = analyzer_agent.invoke({"messages": model_messages(state)})
     result_content = result["messages"][-1].content
     state["messages"].append(AIMessage(content=result_content, name="ResumeAnalyzer"))
     
@@ -135,29 +170,29 @@ def resume_analyzer_node(state):
     
     return state
 
-def cover_letter_generator_node(state):
+def cover_letter_generator_node(state: AgentState, runtime: Runtime[RunContext]):
     """
     求职信生成节点 - 增强协作功能
     """
-    llm = init_chat_model(state["config"])
+    llm = init_chat_model(runtime.context.model_config)
     
     generator_agent = create_agent(
         llm, [
             generate_letter_for_specific_job,
             save_cover_letter_for_specific_job,
-            ResumeExtractorTool(),
+            ResumeExtractorTool(resume_id=state.get("resume_id")),
         ], 
-        system_prompt=get_generator_agent_prompt_template()
+        system_prompt=get_generator_agent_prompt_template() + memory_context(runtime)
     )
 
-    state["callback"].write_agent_name(" CoverLetterGenerator Agent")
+    runtime.context.observer.write_agent_name(" CoverLetterGenerator Agent")
     
     # 检查是否有简历分析结果，如果有则生成更好的提示
-    messages_to_use = state["messages"].copy()
+    messages_to_use = model_messages(state)
     
     # 查找 ResumeAnalyzer 的输出
     resume_analysis = None
-    for msg in reversed(state["messages"]):
+    for msg in reversed(messages_to_use):
         if hasattr(msg, 'name') and msg.name == "ResumeAnalyzer":
             resume_analysis = msg.content
             break
@@ -193,25 +228,25 @@ def cover_letter_generator_node(state):
     
     return state
 
-def job_search_node(state):
+def job_search_node(state: AgentState, runtime: Runtime[RunContext]):
     """
     职位搜索节点 - 支持协作模式
     """
-    llm = init_chat_model(state["config"])
+    llm = init_chat_model(runtime.context.model_config)
     
     search_agent = create_agent(
         llm, [job_search, get_google_search_results], 
-        system_prompt=get_search_agent_prompt_template()
+        system_prompt=get_search_agent_prompt_template() + memory_context(runtime)
     )
     
-    state["callback"].write_agent_name(" JobSearcher Agent")
+    runtime.context.observer.write_agent_name(" JobSearcher Agent")
     
     # 检查是否有简历分析结果，如果有则生成更好的搜索提示
-    messages_to_use = state["messages"].copy()
+    messages_to_use = model_messages(state)
     
     # 查找 ResumeAnalyzer 的输出
     resume_analysis = None
-    for msg in reversed(state["messages"]):
+    for msg in reversed(messages_to_use):
         if hasattr(msg, 'name') and msg.name == "ResumeAnalyzer":
             resume_analysis = msg.content
             break
@@ -251,43 +286,46 @@ def job_search_node(state):
     
     return state
 
-def web_research_node(state):
+def web_research_node(state: AgentState, runtime: Runtime[RunContext]):
     """
     网络研究节点 - 支持协作模式
     """
-    llm = init_chat_model(state["config"])
+    llm = init_chat_model(runtime.context.model_config)
     
     research_agent = create_agent(
         llm, [get_google_search_results, scrape_website], 
-        system_prompt=researcher_agent_prompt_template()
+        system_prompt=researcher_agent_prompt_template() + memory_context(runtime)
     )
     
-    state["callback"].write_agent_name(" WebResearcher Agent")
+    runtime.context.observer.write_agent_name(" WebResearcher Agent")
     
-    result = research_agent.invoke({"messages": state["messages"]})
+    result = research_agent.invoke({"messages": model_messages(state)})
     result_content = result["messages"][-1].content
     state["messages"].append(AIMessage(content=result_content, name="WebResearcher"))
     state["task_completed"] = True
     return state
 
-def chatbot_node(state):
+def chatbot_node(state: AgentState, runtime: Runtime[RunContext]):
     """聊天机器人节点"""
-    llm = init_chat_model(state["config"])  # Ensure LLM initialization uses unified init_chat_model helper
+    llm = init_chat_model(runtime.context.model_config)
     
-    state["callback"].write_agent_name("🤖 ChatBot Agent")
+    runtime.context.observer.write_agent_name("🤖 ChatBot Agent")
     
-    finish_chain = get_finish_chain(llm)
-    output = finish_chain.invoke({"messages": state["messages"]})
+    finish_chain = get_finish_chain(llm, memory_context=memory_context(runtime))
+    output = finish_chain.invoke({"messages": model_messages(state)})
     
     state["messages"].append(AIMessage(content=output.content, name="ChatBot"))
     state["task_completed"] = True
     return state
 
-def define_graph():
+def define_graph(checkpointer=None, store=None):
     """
     定义支持多Agent协作的工作流图
     """
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(AgentState, context_schema=RunContext)
+    # 仅供 update_state(as_node=...) 提交文件绑定；不启动模型或留下待执行节点。
+    workflow.add_node("ResumeBinding", lambda state: {})
+    workflow.add_edge("ResumeBinding", END)
     
     # 添加节点
     workflow.add_node("Supervisor", supervisor_node)
@@ -298,7 +336,14 @@ def define_graph():
     workflow.add_node("ChatBot", chatbot_node)
     
     # 设置入口点
-    workflow.set_entry_point("Supervisor")
+    if store is not None:
+        workflow.add_node("MemoryManager", memory_node)
+        workflow.set_entry_point("MemoryManager")
+        workflow.add_conditional_edges("MemoryManager", lambda state: state["next_step"], {
+            "Supervisor": "Supervisor", "__memory_done__": END,
+        })
+    else:
+        workflow.set_entry_point("Supervisor")
     
     # Supervisor 的条件路由
     workflow.add_conditional_edges(
@@ -333,14 +378,4 @@ def define_graph():
             }
         )
     
-    return workflow.compile()
-
-# The agent state is the input to each node in the graph
-class AgentState(TypedDict):
-    user_input: str              # 用户输入
-    messages: list[BaseMessage]  # 对话历史
-    next_step: str               # 下一步执行的Agent
-    config: dict                 # 配置信息
-    callback: Any                # 回调处理器
-    task_completed: bool         # 🔴 新增：标记任务是否完成
-    needs_followup: str          # 🔴 新增：需要后续执行的Agent
+    return workflow.compile(checkpointer=checkpointer, store=store)

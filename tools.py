@@ -2,11 +2,13 @@
 import os
 import asyncio
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from langchain.tools import BaseTool, tool
+from langchain_core.tools import ToolException
 from data_loader import load_resume, write_cover_letter_to_doc
 from schemas import JobSearchInput
 from utils import SerperClient,FireCrawlClient
+from services.resumes import read_resume_bytes, resume_path
 import json
 
 load_dotenv()
@@ -77,32 +79,35 @@ def job_search(
         return {"error": f"搜索职位时出错: {str(e)}"}
 
 
+class ResumeToolInput(BaseModel):
+    """模型无需也不能提供文件路径或覆盖会话的简历 ID。"""
+    model_config = ConfigDict(extra="forbid")
+
+
 class ResumeExtractorTool(BaseTool):
     name: str = "resume_extractor"
     description: str = "提取已上传的简历内容进行分析。不需要输入参数。"
     
-    def _run(self, query: str = "") -> str:
+    args_schema: type[BaseModel] = ResumeToolInput
+    handle_tool_error: bool = True
+    _resume_id: str | None = PrivateAttr(default=None)
+
+    def __init__(self, *, resume_id=None, **kwargs):
+        super().__init__(**kwargs)
+        self._resume_id = resume_id
+
+    def _run(self) -> str:
         """提取简历内容"""
         try:
-            resume_path = "temp/resume.pdf"
-            
-            if os.path.exists(resume_path):
-                file_size = os.path.getsize(resume_path)
-                if file_size == 0:
-                    return "❌ 简历文件为空"
-                resume_content = load_resume(resume_path)
-                if resume_content and len(resume_content.strip()) > 10:
-                    return resume_content
-                else:
-                    return "❌ 简历文件内容为空或读取失败"
-            else:
-                return "❌ 未找到简历文件"
-                    
-        except Exception as e:
-            return f"❌ 读取简历时出错: {str(e)}"
+            if not self._resume_id:
+                raise ValueError("本会话尚未绑定简历，请在侧边栏上传并绑定。")
+            read_resume_bytes(self._resume_id)
+            return load_resume(resume_path(self._resume_id))
+        except (OSError, ValueError) as exc:
+            raise ToolException(f"简历提取失败：{exc}") from exc
     
-    async def _arun(self, query: str = "") -> str:
-        return self._run(query)
+    async def _arun(self) -> str:
+        return await asyncio.to_thread(self._run)
 
 # Cover Letter Generation Tool
 @tool

@@ -1,6 +1,7 @@
 pypdf
 langchain
-langgraph
+langgraph>=1.1
+langgraph-checkpoint-mysql[pymysql,aiomysql,asyncmy]==3.0.0
 langchain-openai
 langchain-groq
 python-dotenv

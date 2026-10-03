@@ -11,6 +11,36 @@ temp/
 .idea/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 测试与覆盖率运行产物（tests/ 测试源码保留）
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# 本地运行日志
+*.log
 
 # 本地虚拟环境
 .venv/
+venv/
+env/
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+
+# 本地数据库备份；SQL 建表脚本不在此列
+backups/
+*.sql.gz
+*.dump
+*.bak
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini

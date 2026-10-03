@@ -1,413 +1,134 @@
 # JobAgent-MultiAgent
 
-<div align="left">
+一个用 LangGraph 和 Streamlit 写的求职助手，支持简历分析、岗位搜索、求职信撰写和网页调研。基于 [connwang7/JobAgent-MultiAgent](https://github.com/connwang7/JobAgent-MultiAgent) 修改，原项目参考了 [JobPilot-Multi-agent](https://github.com/chenchong911/JobPilot-Multi-agent)。
 
-![Multi-Agent System](multiagent.png)
+这份代码增加了流式显示、MySQL 会话持久化、会话切换、长期记忆和按会话绑定简历，并拆分了页面与对话执行代码。目前按本地单用户使用，没有登录和用户隔离。
 
-<h1 align="center">基于 LangGraph 的多智能体求职助手系统</h1>
+![原项目 Agent 分工示意图](multiagent.png)
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![LangChain](https://img.shields.io/badge/LangChain-Latest-green.svg)](https://github.com/langchain-ai/langchain)
-[![Streamlit](https://img.shields.io/badge/Streamlit-Latest-red.svg)](https://streamlit.io/)
+上图沿用原项目的 Agent 分工示意，未包含新增的记忆管理和持久化部分；具体路由以当前代码为准。
 
-[功能特性](#-功能特性) • [快速开始](#-快速开始) • [系统架构](#-系统架构) • [使用指南](#-使用指南) • [技术栈](#-技术栈)
+## 功能
 
----
+- 简历分析：读取 PDF 的文字，由模型给出分析和修改建议。每段会话单独绑定简历，上传新文件不会覆盖其他会话的文件。
+- 岗位搜索：通过 Serper 搜索岗位相关网页，再整理标题、摘要和链接。结果来自搜索页面，不是招聘平台的完整岗位数据库，也不保证岗位仍在招聘。
+- 求职信：根据简历和用户提供的岗位要求生成正文。模型调用保存工具时，会在本地 temp/ 下生成 Word 文件；页面暂未提供专门的下载按钮。
+- 网页调研：搜索公司或行业信息，按需通过 Firecrawl 读取网页内容，再由模型整理回答。
+- 多步任务：支持先分析简历，再搜索岗位或写求职信。任务由 Supervisor 路由，部分复合任务使用关键词规则。
+- 会话与记忆：支持流式回复、历史会话列表和切换。会话状态通过 MySQL checkpointer 保存；偏好和事实通过 LangGraph Store 保存，可在侧边栏管理，或用“请记住：……”等明确指令操作。普通聊天不会自动写入长期记忆。
 
-## 📖 项目简介
+## 运行环境
 
-JobAgent-MultiAgent 是一个基于 LangGraph 和多智能体协同架构的智能求职助手系统。通过 Supervisor 模式协调多个专业 Agent，为求职者提供从简历分析、岗位搜索、求职信生成到公司调研的一站式求职辅助服务。
+本地使用 Python 3.11、MySQL 8.0.34。已验证环境中的主要依赖为 LangChain 1.4.2、LangGraph 1.2.12、Streamlit 1.64.0，MySQL 适配器为 langgraph-checkpoint-mysql 3.0.0。
 
-> 📚 本项目参考自 [JobPilot-Multi-agent](https://github.com/chenchong911/JobPilot-Multi-agent) 项目
+需要一个支持工具调用的 OpenAI 兼容模型接口。岗位搜索需要 Serper API Key，网页抓取需要 Firecrawl API Key；没有配置对应服务时，该工具不可用。
 
-### 🎯 解决的痛点
+## 本地启动
 
-- **招聘平台碎片化**：信息分散在多个平台，检索效率低
-- **岗位文本非结构化**：JD 描述不统一，难以快速匹配
-- **求职材料同质化**：简历和求职信缺乏针对性，竞争力不足
-- **决策成本高**：需要大量时间进行岗位筛选、公司调研和材料准备
+以下命令在 Windows 的 Anaconda Prompt 中执行。
 
-### ✨ 核心价值
-
-- 🔍 **智能职位搜索**：多维度过滤，快速匹配合适岗位
-- 📄 **简历智能解析**：自动提取技能、经历、成就要点
-- ✉️ **求职信生成**：基于岗位 JD 和简历内容，生成定制化求职信
-- 🌐 **公司/行业调研**：快速聚合企业背景信息，辅助决策
-- 💬 **多轮对话策略**：支持上下文理解，提供个性化求职建议
-
----
-
-## 🚀 功能特性
-
-| 功能模块 | 说明 | 核心价值 |
-|---------|------|---------|
-| **智能职位搜索** | 支持行业、技能、地域、工作类型等多维度过滤 | 降低初筛时间，提高匹配精度 |
-| **简历智能解析** | 自动提取技能、经历、成就要点，结构化展示 | 为后续功能提供结构化数据支持 |
-| **求职信生成** | 基于岗位 JD 和简历内容，生成定制化求职信 | 提升求职材料的针对性和专业度 |
-| **公司/行业调研** | 网页搜索+内容抓取，快速聚合企业背景信息 | 节省调研时间，辅助决策 |
-| **多轮对话策略** | 支持追问和上下文理解，提供求职策略建议 | 减少重复输入，提供个性化指导 |
-| **可扩展工具层** | 模块化设计，支持自定义工具和数据源接入 | 灵活扩展，适应不同场景需求 |
-
----
-
-## 🏗️ 系统架构
-
-### 架构设计
-
-采用 **Supervisor + Multi-Agent** 模式，通过中央调度器协调多个专业智能体协同工作。
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Streamlit UI 前端                     │
-│          (文件上传 + 对话界面 + 结果展示/下载)            │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Supervisor 调度器                       │
-│         (意图识别 + 任务分配 + 流程编排)                  │
-└─────┬───────┬───────┬───────┬───────┬──────────────────┘
-      │       │       │       │       │
-      ▼       ▼       ▼       ▼       ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
-│Resume│ │ Job  │ │Cover │ │ Web  │ │Chat  │
-│Analyz│ │Search│ │Letter│ │Resear│ │ Bot  │
-│  er  │ │  er  │ │Gener │ │ cher │ │      │
-└──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘
-   │        │        │        │        │
-   └────────┴────────┴────────┴────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│                    工具层 (Tools)                        │
-│  • 简历解析 (PyPDF/PyMuPDF)                              │
-│  • 职位搜索 (Serper API)                                 │
-│  • 网页抓取 (FireCrawl API)                              │
-│  • 文档生成 (python-docx)                                │
-└─────────────────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│                  大模型层 (LLMs)                         │
-│  • 通义千问 (Qwen)                                       │
-│  • OpenAI 兼容接口 (DeepSeek/GPT等)                      │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 智能体说明
-
-| Agent | 职责 | 工具 |
-|-------|------|------|
-| **Supervisor** | 意图识别、任务分配、流程编排 | - |
-| **ResumeAnalyzer** | 解析和分析简历内容 | resume_extractor, google_search |
-| **JobSearcher** | 根据条件搜索匹配岗位 | job_search, google_search |
-| **CoverLetterGenerator** | 生成个性化求职信 | generate_letter, save_cover_letter |
-| **WebResearcher** | 在线信息搜集和整理 | google_search, scrape_website |
-| **ChatBot** | 处理一般性对话和咨询 | - |
-
----
-
-## 💻 技术栈
-
-### 核心框架
-- **LangChain**：LLM 应用开发框架
-- **LangGraph**：多智能体工作流编排
-- **Streamlit**：Web UI 框架
-
-### 大模型支持
-- **通义千问 (Qwen)**：阿里云 DashScope API
-- **OpenAI 兼容接口**：OpenAI GPT、DeepSeek 等
-
-### 外部服务
-- **Serper API**：Google 搜索服务
-- **FireCrawl API**：网页内容抓取
-
-### 数据处理
-- **PyPDF / PyMuPDF**：PDF 文件解析
-- **python-docx**：Word 文档生成
-- **Pydantic**：数据验证和模型定义
-
----
-
-## 🚀 快速开始
-
-### 环境要求
-
-- Python 3.8+
-- pip 或 conda
-
-### 安装步骤
-
-1. **克隆项目**
-
-```bash
-git clone https://github.com/yourusername/JobAgent-MultiAgent.git
+```bat
+git clone https://github.com/weijifenzzz/JobAgent-MultiAgent.git
 cd JobAgent-MultiAgent
+conda create -n jobagent python=3.11 -y
+conda activate jobagent
+python -m pip install -r requirements.txt
+copy .env.example .env
 ```
 
-2. **安装依赖**
+已有环境和 .env 时跳过对应步骤，不要覆盖原来的配置。
 
-```bash
-pip install -r requirements.txt
+编辑项目根目录的 .env，填写模型和本地 MySQL 配置：
+
+```dotenv
+OPENAI_API_KEY=你的模型密钥
+OPENAI_BASE_URL=服务商提供的OpenAI兼容接口地址
+MODEL_NAME=支持工具调用的模型名称
+
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=你的数据库用户名
+MYSQL_PASSWORD=你的数据库密码
+MYSQL_DATABASE=jobagent
+
+SERPER_API_KEY=
+FIRECRAWL_API_KEY=
 ```
 
-3. **配置环境变量**
+需要搜索或抓取网页时，分别填入最后两项。建议首次启动前配好；修改 .env 后重启应用。
 
-创建 `.env` 文件或配置 `.streamlit/secrets.toml`：
+确保 MySQL 已启动，再执行：
 
-```env
-# 大模型配置（必需）
-OPENAI_API_KEY=sk-xxxxx
-OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-
-# 外部服务（可选）
-SERPER_API_KEY=xxxxx
-FIRECRAWL_API_KEY=xxxxx
-
-# LangSmith 追踪（可选）
-# 方式一：启用 LangSmith 监控（需填写 API Key）
-# 访问 https://smith.langchain.com/ 获取 Key
-LANGCHAIN_API_KEY=langsmith_api_key_here
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_PROJECT=JOB_SEARCH_AGENT
-
-# 方式二：禁用 LangSmith 追踪
-# LANGCHAIN_TRACING_V2=false
+```bat
+python -m scripts.init_mysql
+python -m streamlit run app.py
 ```
 
-4. **启动应用**
+初始化脚本会创建 jobagent 数据库及会话、checkpoint、Store 所需表，账号需要建库和建表权限。初始化完成后，日常启动只需运行 `python -m streamlit run app.py`。打开终端显示的 Local URL，默认是 http://localhost:8501。
 
-```bash
-streamlit run app.py
+页面也可以填写和保存模型配置。已在页面保存的配置优先于 .env；如果修改 .env 后页面仍显示旧配置，可以在侧边栏重新填写并保存。
+
+## 使用
+
+1. 新建或选择一个会话。
+2. 在“当前会话的简历”中上传 PDF，点击“绑定到当前会话”，也可以选择仓库自带的演示简历。当前普通聊天入口也要求先绑定简历。
+3. 填写模型配置，点击“测试连接”，再发送问题。
+
+可以先测试“总结我的简历”，再测试“分析我的简历并推荐上海的 Python 岗位”。写求职信时尽量提供目标公司和具体岗位要求；网页调研需要配置搜索、抓取服务。
+
+重启后可以从会话列表继续原对话。有未完成任务时，页面会提供恢复入口；恢复过程中可能重新调用失败节点里的模型和工具。
+
+长期记忆可以直接在侧边栏添加、修改和删除，也可以单独发送“请记住：我的目标城市是上海”或“查看我的记忆”。当前所有会话共用一份本地用户记忆。
+
+更换简历后，旧聊天仍保留，但后续模型只使用更换后的对话；需要重新分析新简历。长期记忆不随简历更换而清空。旧会话如果没有记录简历 ID，需要手动重新绑定。
+
+## 文件和数据
+
+```text
+app.py               Streamlit 入口
+agents.py            图、路由和各 Agent 节点
+chains.py / prompts.py
+                     模型链和提示词
+tools.py / utils.py  搜索、网页抓取、简历提取和文档保存工具
+data_loader.py       PDF 文字提取、Word 写入
+llms.py              模型初始化
+settings.py          配置加载与保存
+persistence.py       MySQL checkpointer、Store 和会话目录
+runtime_context.py   模型配置等运行时依赖
+services/            对话执行、简历绑定、长期记忆
+ui/                  页面组件和页面状态
+scripts/             数据库初始化、集成验证
+tests/               自动化测试
+docs/                实现说明
 ```
 
-应用将在浏览器中自动打开：`http://localhost:8501`
-前端界面如下图所示：
-![Front-end](main.png)
----
+上传的简历保存在 `temp/resumes/<resume_id>.pdf`，会话在 MySQL 中记录对应的 ID。`temp/app_config.json` 保存页面配置，可能包含密钥。这些本地文件不提交到 Git。
 
-## 📖 使用指南
+`temp/resumes/` 虽然位于 temp 目录，但会被历史会话长期引用，不要当作普通缓存清理。备份时需要同时保留数据库和简历目录。
 
-### 首次配置（3 分钟）
+## 当前限制
 
-#### 步骤 1：配置大模型
+- PDF 使用文字提取，未接入 OCR；纯扫描件需要先识别成带文字的 PDF。
+- 岗位信息主要来自搜索摘要，公司、地点等字段可能不完整，需要核对原链接。
+- 求职信保存工具返回的是本地路径，不是可直接访问的网页下载地址；同名公司的文件可能被覆盖。
+- 工具调用由模型决定，提示词要求不等于程序校验。工具调用能力、外部服务额度和网络状态都会影响结果。
+- 没有接入 RAG、用户登录或普通聊天的自动记忆保存，也没有独立的前后端 API。
 
-在左侧边栏找到 **"🤖 大模型配置"**：
+## 测试
 
-**使用通义千问（推荐）**
-```
-模型名称: qwen-plus
-API Key: sk-x
-Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-Temperature: 0.3
-```
+在项目根目录执行离线测试：
 
-**使用 DeepSeek**
-```
-模型名称: deepseek-chat
-API Key: 你的 DeepSeek API Key
-Base URL: https://api.deepseek.com/v1
-Temperature: 0.3
+```bat
+python -m unittest discover -s tests -v
 ```
 
-**使用 OpenAI**
-```
-模型名称: gpt-4
-API Key: 你的 OpenAI API Key
-Base URL: https://api.openai.com/v1
-Temperature: 0.3
-```
+测试使用模拟模型和临时文件，覆盖会话、流式事件、简历绑定、长期记忆和页面交互，不消耗模型 API 额度。
 
-#### 步骤 2：配置外部服务（可选）
+配置 MySQL 并初始化后，可以验证跨进程恢复：
 
-```
-Serper API Key: 你的 Serper Key（用于网络搜索）
-FireCrawl API Key: 你的 FireCrawl Key（用于网页抓取）
+```bat
+python -m scripts.verify_resume_binding
+python -m scripts.verify_mysql_store
 ```
 
-#### 步骤 3：上传简历
-
-在 **"📄 简历管理"** 区域上传 PDF 格式的简历。
-
-### 使用示例
-
-#### 场景 1：简历分析
-```
-1. 上传简历
-2. 点击 "总结我的简历"
-3. 查看分析结果（技能、经验、优势等）
-```
-
-#### 场景 2：岗位搜索
-```
-输入：搜索北京的机器学习工程师岗位
-查看：岗位列表（职位名称、公司、地点、申请链接）
-```
-
-#### 场景 3：求职信生成
-```
-输入：为我生成一份申请字节跳动 AI 工程师的求职信
-查看：生成的求职信
-下载：DOCX 文件
-```
-
-#### 场景 4：复合任务
-```
-输入：分析我的简历并推荐合适岗位
-系统会自动：
-  1. 先分析简历
-  2. 再根据分析结果推荐岗位
-```
-
----
-
-## 🔄 大模型切换
-
-### 统一的 LLM 抽象层
-
-项目支持灵活切换不同的大模型提供商，无需修改业务逻辑代码。
-
-### 支持的模型配置
-
-#### 1. 通义千问（原生接口）
-```python
-settings = {
-    "model": "qwen-plus",
-    "model_provider": "tongyi",
-    "DASHSCOPE_API_KEY": "sk-xxxxx"
-}
-```
-
-#### 2. 通义千问（OpenAI 兼容模式）
-```python
-settings = {
-    "model": "qwen-plus",
-    "model_provider": "openai",
-    "OPENAI_API_KEY": "sk-xxxxx",
-    "OPENAI_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1"
-}
-```
-
-#### 3. OpenAI GPT
-```python
-settings = {
-    "model": "gpt-4",
-    "model_provider": "openai",
-    "OPENAI_API_KEY": "sk-xxxxx",
-    "OPENAI_BASE_URL": "https://api.openai.com/v1"
-}
-```
-
-#### 4. DeepSeek
-```python
-settings = {
-    "model": "deepseek-chat",
-    "model_provider": "openai",
-    "OPENAI_API_KEY": "sk-xxxxx",
-    "OPENAI_BASE_URL": "https://api.deepseek.com/v1"
-}
-```
-
----
-
-## 📁 项目结构
-
-```
-JobAgent-MultiAgent/
-├── app.py                      # Streamlit 应用入口
-├── agents.py                   # Agent 定义和工作流编排
-├── llms.py                     # 大模型初始化和管理
-├── chains.py                   # LangChain 链定义
-├── tools.py                    # 工具函数集合
-├── prompts.py                  # 提示词模板
-├── members.py                  # Agent 成员配置
-├── schemas.py                  # 数据模型定义
-├── utils.py                    # 工具类 (Serper/FireCrawl)
-├── data_loader.py              # 数据加载和处理
-├── custom_callback_handler.py  # 自定义回调处理
-├── requirements.txt            # 依赖包列表
-├── .env                        # 环境变量配置
-├── temp/                       # 临时文件存储
-└── README.md                   # 项目说明文档
-```
-
----
-
-## 🎯 项目亮点
-
-### 1. 多智能体协同架构
-- 采用 Supervisor 模式，实现任务的智能分配和编排
-- 支持单一任务和复合任务的自动识别和执行
-- Agent 之间可以共享上下文，实现协作
-
-### 2. 灵活的模型切换机制
-- 统一的 LLM 抽象层，支持多种大模型提供商
-- 通过配置文件或 UI 界面即可切换模型
-- 支持 OpenAI 兼容接口，扩展性强
-
-### 3. 模块化设计
-- 工具层、Agent 层、UI 层解耦
-- 易于扩展新的 Agent 和工具
-- 清晰的代码结构，便于维护
-
-### 4. 用户友好的交互
-- Streamlit 提供直观的 Web 界面
-- 支持文件上传、对话交互、结果下载
-- 预设常用问题，降低使用门槛
-
-### 5. 完整的求职流程覆盖
-- 从简历分析到岗位搜索，再到求职信生成
-- 提供公司调研和策略咨询
-- 一站式解决求职痛点
-
----
-
-## 📊 功能对照表
-
-| 功能 | 需要简历 | 需要 Serper | 需要 FireCrawl | 说明 |
-|------|---------|------------|---------------|------|
-| 简历分析 | ✅ | ❌ | ❌ | 分析简历内容 |
-| 岗位搜索 | ❌ | ✅ | ❌ | 搜索职位信息 |
-| 求职信生成 | ✅ | ❌ | ❌ | 生成个性化求职信 |
-| 公司调研 | ❌ | ✅ | ✅ | 搜索并抓取公司信息 |
-| 简历+岗位推荐 | ✅ | ✅ | ❌ | 基于简历推荐岗位 |
-| 一般对话 | ❌ | ❌ | ❌ | 求职策略咨询 |
-
----
-
-## ❓ 常见问题
-
-### Q1: 提示 "请先配置模型 API Key 和 Base URL"
-**A**: 在左侧边栏的 "🤖 大模型配置" 中填写完整的配置信息。
-
-### Q2: 提示 "请先上传您的简历"
-**A**: 在左侧边栏的 "📄 简历管理" 中上传 PDF 简历。
-
-### Q3: 搜索功能不可用
-**A**: 需要配置 Serper API Key。访问 https://serper.dev/ 注册获取。
-
-### Q4: 网页抓取功能不可用
-**A**: 需要配置 FireCrawl API Key。访问 https://firecrawl.dev/ 注册获取。
-
-### Q5: 如何切换模型？
-**A**: 在 "🤖 大模型配置" 中修改模型名称、API Key 和 Base URL 即可，无需重启应用。
-
----
-
-## 🎉 致谢
-
-感谢以下开源项目：
-
-- [LangChain](https://github.com/langchain-ai/langchain)
-- [LangGraph](https://github.com/langchain-ai/langgraph)
-- [Streamlit](https://streamlit.io/)
-
----
-
-<div align="center">
-
-**祝你求职顺利！🚀**
-
-Made with ❤️ by JobAgent-MultiAgent Team
-
-</div>
+这两个脚本使用合成数据，完成后清理自己的测试记录。离线测试和数据库验证不代表模型、Serper、Firecrawl 已完成联网验证；使用自己的服务配置后，还需要在页面实际测试。
