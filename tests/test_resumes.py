@@ -1,5 +1,7 @@
 """真实 PDF、真实内存 checkpoint 和嵌套 Agent 的简历隔离回归。"""
 
+from schemas import RouteSchema
+
 import os
 import tempfile
 import unittest
@@ -82,7 +84,7 @@ class ResumeTests(unittest.TestCase):
         agent = Mock()
         agent.invoke.return_value = {"messages": [AIMessage(content="NEW_RESULT")]}
         route = Mock()
-        route.invoke.return_value = AIMessage(content="JobSearcher")
+        route.invoke.return_value = RouteSchema(steps=["JobSearcher"])
         with patch.object(self.agents, "init_chat_model", return_value=FakeListChatModel(responses=["unused"])), \
              patch.object(self.agents, "get_supervisor_chain", return_value=route), \
              patch.object(self.agents, "create_agent", return_value=agent):
@@ -98,7 +100,7 @@ class ResumeTests(unittest.TestCase):
         bind_resume(self.graph, "a", self.a_id, "a.pdf")
         with patch.object(self.agents, "supervisor_node"):
             # 图已编译；替换它调用的 chain，制造可恢复的节点错误。
-            with patch.object(self.agents, "init_chat_model", return_value=FakeListChatModel(responses=["ResumeAnalyzer"])), \
+            with patch.object(self.agents, "init_chat_model", return_value=FakeListChatModel(responses=['{"steps": ["ResumeAnalyzer"]}'])), \
                  patch.object(self.agents, "create_agent", side_effect=RuntimeError("offline failure")):
                 with self.assertRaisesRegex(RuntimeError, "offline failure"):
                     run_conversation(self.graph, "分析简历", [], {}, thread_id="a")
@@ -138,7 +140,7 @@ class ResumeTests(unittest.TestCase):
 
         with patch.object(ResumeExtractorTool, "_run", run), \
              patch.object(self.agents, "init_chat_model", side_effect=[
-                 FakeListChatModel(responses=["ResumeAnalyzer"]), model,
+                 FakeListChatModel(responses=['{"steps": ["ResumeAnalyzer"]}']), model,
              ]):
             events = list(stream_conversation(self.graph, "分析简历", [], {}, thread_id="a"))
         self.assertIn("ALPHA", extracted[0])

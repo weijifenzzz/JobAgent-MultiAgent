@@ -1,5 +1,7 @@
 """离线验证运行时依赖可用，但不进入图状态、流式更新和检查点。"""
 
+from schemas import RouteSchema
+
 import os
 import unittest
 from unittest.mock import Mock, patch
@@ -59,7 +61,7 @@ class RuntimeContextTests(unittest.TestCase):
         with patch.object(self.agents, "init_chat_model") as init_model, \
              patch.object(self.agents, "get_supervisor_chain") as supervisor, \
              patch.object(self.agents, "get_finish_chain") as finish:
-            supervisor.return_value.invoke.return_value = AIMessage(content="Finish")
+            supervisor.return_value.invoke.return_value = RouteSchema(steps=["ChatBot"])
             finish.return_value.invoke.return_value = AIMessage(content="goodbye")
             updates = list(graph.stream(
                 {"messages": [HumanMessage(content="thanks")], "user_input": "thanks"},
@@ -91,7 +93,7 @@ class RuntimeContextTests(unittest.TestCase):
         with patch.object(self.agents, "init_chat_model") as init_model, \
              patch.object(self.agents, "get_supervisor_chain") as supervisor, \
              patch.object(self.agents, "get_finish_chain") as finish:
-            supervisor.return_value.invoke.return_value = AIMessage(content="Finish")
+            supervisor.return_value.invoke.return_value = RouteSchema(steps=["ChatBot"])
             finish.return_value.invoke.return_value = AIMessage(content="goodbye")
             run_conversation(graph, "thanks", [], {"model": "first"}, first)
             run_conversation(graph, "thanks", [], {"model": "second"}, second)

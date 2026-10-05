@@ -108,7 +108,7 @@ class MemoryTests(unittest.TestCase):
             return get_finish_chain(llm, memory_context=memory_context)
 
         with patch.object(self.agents, "init_chat_model", side_effect=[
-            FakeListChatModel(responses=["ChatBot"]), FakeListChatModel(responses=["你偏好上海。"])
+            FakeListChatModel(responses=['{"steps": ["ChatBot"]}']), FakeListChatModel(responses=["你偏好上海。"])
         ]), patch.object(self.agents, "get_finish_chain", side_effect=finish):
             result = run_conversation(graph, "我的偏好是什么？", [], {}, thread_id="b")
         self.assertIn("上海", captured[0])
@@ -126,7 +126,7 @@ class MemoryTests(unittest.TestCase):
         fake_agent = Mock()
         from langchain_core.messages import AIMessage
         fake_agent.invoke.return_value = {"messages": [AIMessage(content="分析完成")]}
-        with patch.object(self.agents, "init_chat_model", return_value=FakeListChatModel(responses=["ResumeAnalyzer"])), \
+        with patch.object(self.agents, "init_chat_model", return_value=FakeListChatModel(responses=['{"steps": ["ResumeAnalyzer"]}'])), \
                 patch.object(self.agents, "create_agent", return_value=fake_agent) as create:
             run_conversation(self.agents.define_graph(store=self.store), "分析简历", [], {})
         self.assertIn("上海", create.call_args.kwargs["system_prompt"])

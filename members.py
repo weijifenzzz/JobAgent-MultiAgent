@@ -28,11 +28,7 @@ def get_team_members_details() -> dict:
         },
         {
             "name": "ChatBot",
-            "description": "If user is asking something to format or he want to get some information from the messages."
-        },
-        {
-            "name": "Finish",
-            "description": "Represents the end of the workflow.",
+            "description": "Handles greetings, thanks, closing replies, simple summaries of existing messages, and clarification of ambiguous or unsupported task combinations."
         },
     ]
     return members_dict

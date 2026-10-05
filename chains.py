@@ -1,3 +1,7 @@
+import json
+from pydantic import ValidationError
+from langchain_core.runnables import RunnableLambda
+from schemas import RouteSchema
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage
@@ -6,46 +10,27 @@ from prompts import get_supervisor_prompt_template, get_finish_step_prompt
 
 
 def get_supervisor_chain(llm: BaseChatModel, memory_context=""):
-    """
-    简化的 supervisor chain，直接返回文本结果
-    """
-    team_members = get_team_members_details()
-
-    # 格式化成员信息
-    formatted_string = ""
-    for i, member in enumerate(team_members):
-        formatted_string += f"**{i+1} {member['name']}**\nRole: {member['description']}\n\n"
-
-    formatted_members_string = formatted_string.strip()
-    system_prompt = get_supervisor_prompt_template()
-    options = [member["name"] for member in team_members]
-
+    """模型输出 JSON 任务安排；格式或步骤不合法时最多再生成一次。"""
+    members = "\n".join(
+        f"{member['name']}: {member['description']}"
+        for member in get_team_members_details()
+    )
+    instructions = get_supervisor_prompt_template().format(
+        members=members,
+        format_instructions=json.dumps(RouteSchema.model_json_schema(), ensure_ascii=False),
+    )
     prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        # 使用消息对象，记忆 JSON 的花括号不会被当成模板占位符。
+        # 使用消息对象，JSON 和长期记忆里的花括号不参与模板替换。
+        SystemMessage(content=instructions),
         *([SystemMessage(content=memory_context)] if memory_context else []),
         MessagesPlaceholder(variable_name="messages"),
-        (
-            "system",
-            f"""
-            Given the conversation above, who should act next?
-            Select EXACTLY ONE of: {options}
-            
-            Rules:
-            - For resume analysis: ResumeAnalyzer
-            - For job search: JobSearcher  
-            - For cover letter: CoverLetterGenerator
-            - For web research, knowledge-base lookup, technical explanations or interview preparation: WebResearcher
-            - Agent/RAG interview questions are knowledge requests, not job searches or resume analysis.
-            - For general chat: ChatBot
-            - When done: Finish
-            
-            Respond with ONLY the agent name, nothing else.
-            """,
-        ),
-    ]).partial(options=str(options), members=formatted_members_string)
-
-    return prompt | llm
+    ])
+    parse = RunnableLambda(lambda message: RouteSchema.model_validate_json(message.content))
+    return (prompt | llm | parse).with_retry(
+        retry_if_exception_type=(ValidationError,),
+        stop_after_attempt=2,
+        wait_exponential_jitter=False,
+    )
 
 
 def get_finish_chain(llm: BaseChatModel, memory_context=""):

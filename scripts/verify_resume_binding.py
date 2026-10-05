@@ -1,5 +1,7 @@
 """真实 MySQL 跨进程验证简历绑定；合成 PDF、离线模型，结束清理测试会话。"""
 
+from schemas import RouteSchema
+
 import argparse
 import hashlib
 import json
@@ -47,7 +49,7 @@ def worker(phase, root, threads):
         if phase == "read":
             # 绑定信息由图合并保留，服务输入没有显式重复传 resume_id。
             route = Mock()
-            route.invoke.return_value = AIMessage(content="ChatBot")
+            route.invoke.return_value = RouteSchema(steps=["ChatBot"])
             finish = Mock()
             finish.invoke.return_value = AIMessage(content="Saved reply for ALPHA")
             with db.threads.lock(threads[0]), \

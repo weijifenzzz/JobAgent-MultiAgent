@@ -57,7 +57,7 @@ class StreamingTests(unittest.TestCase):
         model = ScriptedModel(scripts=[[
             AIMessageChunk(content="不客气，"), AIMessageChunk(content="祝你求职顺利！"),
         ]], release=release)
-        models = [FakeListChatModel(responses=["Finish"]), model]
+        models = [FakeListChatModel(responses=['{"steps": ["ChatBot"]}']), model]
         with patch.object(self.agents, "init_chat_model", side_effect=models):
             events = []
             try:
@@ -86,7 +86,7 @@ class StreamingTests(unittest.TestCase):
             [AIMessageChunk(content="你的优势是"), AIMessageChunk(content=" Python。")],
         ])
         with patch.object(self.agents, "init_chat_model", side_effect=[
-            FakeListChatModel(responses=["ResumeAnalyzer"]), model,
+            FakeListChatModel(responses=['{"steps": ["ResumeAnalyzer"]}']), model,
         ]), patch.object(self.agents, "ResumeExtractorTool", return_value=resume_extractor):
             events = list(stream_conversation(self.agents.define_graph(), "分析简历", [], {}))
         self.assertEqual(model.calls, 2)
@@ -100,7 +100,7 @@ class StreamingTests(unittest.TestCase):
         first = ScriptedModel(scripts=[[AIMessageChunk(content="简历分析结果")]])
         second = ScriptedModel(scripts=[[AIMessageChunk(content="岗位推荐结果")]])
         with patch.object(self.agents, "init_chat_model", side_effect=[
-            FakeListChatModel(responses=["unused"]), first, second,
+            FakeListChatModel(responses=['{"steps": ["ResumeAnalyzer", "JobSearcher"]}']), first, second,
         ]):
             events = list(stream_conversation(self.agents.define_graph(), "分析简历并推荐岗位", [], {}))
         result = events[-1].result
@@ -114,10 +114,10 @@ class StreamingTests(unittest.TestCase):
         from services.conversation import thread_config
         graph = self.agents.define_graph(checkpointer=InMemorySaver())
         models = [
-            FakeListChatModel(responses=["unused"]),
+            FakeListChatModel(responses=['{"steps": ["ResumeAnalyzer", "JobSearcher"]}']),
             ScriptedModel(scripts=[[AIMessageChunk(content="简历分析结果")]]),
             ScriptedModel(scripts=[[AIMessageChunk(content="岗位推荐结果")]]),
-            FakeListChatModel(responses=["ChatBot"]),
+            FakeListChatModel(responses=['{"steps": ["ChatBot"]}']),
             ScriptedModel(scripts=[[AIMessageChunk(content="不客气")]]),
         ]
         with patch.object(self.agents, "init_chat_model", side_effect=models):

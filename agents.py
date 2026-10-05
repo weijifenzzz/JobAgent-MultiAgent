@@ -1,11 +1,9 @@
 from typing import TypedDict
 from langchain.agents import create_agent
 from llms import get_llm
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 import os
-import re
 
 from langgraph.graph import StateGraph, END
 from langgraph.runtime import Runtime
@@ -14,6 +12,8 @@ from services.memory import handle_memory_request, memory_context, memory_intent
 from services.resumes import model_messages
 from dotenv import load_dotenv
 from chains import get_finish_chain, get_supervisor_chain
+from pydantic import ValidationError
+from schemas import RouteSchema
 from tools import (
     job_search,
     ResumeExtractorTool,
@@ -74,90 +74,34 @@ def memory_node(state: AgentState, runtime: Runtime[RunContext], config: Runnabl
     }
 
 
-def _is_knowledge_question(text: str) -> bool:
-    """仅用于路由输出无效时的兜底；有效路由仍由 Supervisor 判断。"""
-    text = text.lower()
-    if any(word in text for word in ["分析我的简历", "总结我的简历", "评估我的简历", "求职信", "cover letter", "找工作", "招聘", "job postings"]):
-        return False
-    if "知识库" in text or "hello-agents" in text:
-        return True
-    topic = any(word in text for word in ["智能体", "向量", "记忆", "上下文", "工具调用", "大模型", "提示词"])
-    topic = topic or bool(re.search(r"(?<![a-z0-9_])(agent|agents|rag|react|langgraph|embedding|mcp|llm)(?![a-z0-9_])", text))
-    question = any(word in text for word in ["什么", "如何", "怎么", "区别", "解释", "原理", "学习", "面试", "复习", "评估", "分析"])
-    question = question or bool(re.search(r"\b(what|how|explain|difference|interview|learn)\b", text))
-    return topic and question
-
-
 def supervisor_node(state: AgentState, runtime: Runtime[RunContext]):
-    """
-    Supervisor 节点 - 支持多Agent协作
-    """
-    chat_history = model_messages(state)
-    user_query = state.get("user_input", "")
-    
-    # 如果有后续任务，直接执行
-    if state.get("needs_followup"):
-        next_action = state["needs_followup"]
-        state["needs_followup"] = ""  # 把这条待执行安排消费掉，避免以后重复使用
-        print(f"执行后续任务: {next_action}")
-        state["next_step"] = next_action
+    """新请求由模型规划；已验证的后续任务直接继续，不重新规划。"""
+    followup = state.get("needs_followup")
+    if followup:
+        # 兼容已有检查点，只接受当前流程支持的后续节点。
+        RouteSchema(steps=["ResumeAnalyzer", followup])
+        state.update(next_step=followup, needs_followup="", task_completed=False)
         return state
-    
-    llm = init_chat_model(runtime.context.model_config)
-    
+
+    chat_history = model_messages(state)
     if not chat_history:
-        chat_history.append(HumanMessage(content=user_query))
-        state.setdefault("messages", []).append(chat_history[-1])
-    
-    # 分析用户查询，检测复合任务
-    user_lower = user_query.lower()
-    
-    # 检测复合任务模式
-    if ("简历" in user_lower or "resume" in user_lower) and ("求职信" in user_lower or "cover letter" in user_lower):
-        # 复合任务1：简历分析 + 求职信生成
-        print("检测到复合任务：简历分析 + 求职信生成")
-        state["needs_followup"] = "CoverLetterGenerator"
-        next_action = "ResumeAnalyzer"
-        
-    elif ("简历" in user_lower or "resume" in user_lower or "分析我的" in user_lower) and \
-         ("岗位" in user_lower or "job" in user_lower or "职位" in user_lower or "推荐" in user_lower or "招聘" in user_lower or "工作" in user_lower):
-        # 复合任务2：简历分析 + 岗位推荐
-        print("检测到复合任务：简历分析 + 岗位推荐")
-        state["needs_followup"] = "JobSearcher"
-        next_action = "ResumeAnalyzer"
-        
-    elif ("搜索" in user_lower or "查找" in user_lower) and \
-         ("岗位" in user_lower or "job" in user_lower or "职位" in user_lower or "工作" in user_lower) and \
-         ("简历" in user_lower or "resume" in user_lower or "我的" in user_lower):
-        # 复合任务3：简历分析 + 岗位搜索
-        print("检测到复合任务：简历分析 + 岗位搜索")
-        state["needs_followup"] = "JobSearcher"
-        next_action = "ResumeAnalyzer"
-        
-    else:
-        # 单一任务，使用 supervisor chain
-        supervisor_chain = get_supervisor_chain(llm, memory_context=memory_context(runtime))
-        output = supervisor_chain.invoke({"messages": chat_history})
-        next_action = output.content.strip()
-        
-        # 验证输出
-        valid_agents = ["ResumeAnalyzer", "CoverLetterGenerator", "JobSearcher", "WebResearcher", "ChatBot", "Finish"]
-        if next_action not in valid_agents:
-            if _is_knowledge_question(user_lower):
-                next_action = "WebResearcher"
-            elif any(word in user_lower for word in ["简历", "resume", "分析"]):
-                next_action = "ResumeAnalyzer"
-            elif any(word in user_lower for word in ["岗位", "job", "工作"]):
-                next_action = "JobSearcher"
-            elif any(word in user_lower for word in ["求职信", "cover letter"]):
-                next_action = "CoverLetterGenerator"
-            elif any(word in user_lower for word in ["搜索", "研究", "新闻"]):
-                next_action = "WebResearcher"
-            else:
-                next_action = "ChatBot"
-    
-    print(f"路由到: {next_action}")
-    state["next_step"] = next_action
+        message = HumanMessage(content=state.get("user_input", ""))
+        chat_history.append(message)
+        state.setdefault("messages", []).append(message)
+
+    llm = init_chat_model(runtime.context.model_config)
+    chain = get_supervisor_chain(llm, memory_context=memory_context(runtime))
+    try:
+        plan = chain.invoke({"messages": chat_history})
+    except ValidationError:
+        raise RuntimeError("Supervisor 连续两次未返回有效任务安排，请重试。") from None
+
+    state.update(
+        next_step=plan.steps[0],
+        needs_followup=plan.steps[1] if len(plan.steps) == 2 else "",
+        task_completed=False,
+    )
+    print(f"任务安排: {' -> '.join(plan.steps)}")
     return state
 
 

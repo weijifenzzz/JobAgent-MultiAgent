@@ -1,5 +1,7 @@
 """离线回归：配置、会话、服务，以及真实 LangGraph 的结束路由。"""
 
+from schemas import RouteSchema
+
 import os
 import tempfile
 import unittest
@@ -53,7 +55,7 @@ class ConversationTests(unittest.TestCase):
             with patch.object(agents, "init_chat_model"), \
                  patch.object(agents, "get_supervisor_chain") as supervisor, \
                  patch.object(agents, "get_finish_chain") as finish:
-                supervisor.return_value.invoke.return_value = AIMessage(content="Finish")
+                supervisor.return_value.invoke.return_value = RouteSchema(steps=["ChatBot"])
                 finish.return_value.invoke.return_value = AIMessage(content="不客气，祝你求职顺利！")
                 result = run_conversation(agents.define_graph(), "暂时没有其他问题，谢谢。", [], {})
                 self.assertEqual(result.reply, "不客气，祝你求职顺利！")

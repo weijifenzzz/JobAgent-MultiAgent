@@ -1,21 +1,22 @@
-from ast import List
 from typing import Literal, Optional, List, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RouteSchema(BaseModel):
-    next_action: Literal[
-        "ResumeAnalyzer",
-        "CoverLetterGenerator",
-        "JobSearcher",
-        "WebResearcher",
-        "ChatBot",
-        "Finish",
-    ] = Field(
-        ...,
-        title="Next",
-        description="Select the next role",
-    )
+    """当前图支持单节点任务，以及先分析简历再推荐岗位或写求职信。"""
+    model_config = ConfigDict(extra="forbid")
+    steps: list[Literal[
+        "ResumeAnalyzer", "CoverLetterGenerator", "JobSearcher", "WebResearcher", "ChatBot",
+    ]] = Field(min_length=1, max_length=2, description="按实际执行顺序列出 Agent 名称")
+
+    @model_validator(mode="after")  # 检验
+    def validate_supported_order(self):
+        if len(self.steps) == 2 and self.steps not in [  # 目前只有ResumeAnalyzer任务有后续
+            ["ResumeAnalyzer", "JobSearcher"],
+            ["ResumeAnalyzer", "CoverLetterGenerator"],
+        ]:
+            raise ValueError("双步骤仅支持 ResumeAnalyzer 后接 JobSearcher 或 CoverLetterGenerator")
+        return self
 
 
 class JobSearchInput(BaseModel):

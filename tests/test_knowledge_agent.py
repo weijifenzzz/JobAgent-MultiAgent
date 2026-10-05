@@ -81,7 +81,7 @@ class KnowledgeAgentTests(unittest.TestCase):
             [AIMessageChunk(content=reply)],
         ])
         with patch.object(self.agents, "init_chat_model", side_effect=[
-            FakeListChatModel(responses=["WebResearcher"]), model,
+            FakeListChatModel(responses=['{"steps": ["WebResearcher"]}']), model,
         ]):
             events = list(stream_conversation(self.agents.define_graph(), "解释Agent记忆", [], {}))
         self.assertEqual(set(model.bound_names), {"search_knowledge_base", "google_search", "scrape_website"})
@@ -92,14 +92,6 @@ class KnowledgeAgentTests(unittest.TestCase):
         self.assertEqual("".join(e.text for e in events if e.type == "text_delta"), reply)
         self.index.search.assert_called_once()
 
-    def test_invalid_supervisor_output_uses_knowledge_fallback(self):
-        for query in ["什么是RAG？", "分析 Agent 工作原理", "Agent 岗位面试如何回答记忆问题？"]:
-            with self.subTest(query=query), patch.object(self.agents, "init_chat_model", return_value=FakeListChatModel(responses=["invalid-route"])):
-                runtime = SimpleNamespace(context=SimpleNamespace(model_config={}), store=None)
-                result = self.agents.supervisor_node({"user_input": query, "messages": []}, runtime)
-            self.assertEqual(result["next_step"], "WebResearcher")
-        for query in ["搜索上海 Agent 招聘岗位", "分析我的简历中的 Agent 项目", "帮我写求职信", "谢谢"]:
-            self.assertFalse(self.agents._is_knowledge_question(query))
 
 
 if __name__ == "__main__":

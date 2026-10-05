@@ -1,34 +1,37 @@
 def get_supervisor_prompt_template():
-    system_prompt = """你是一个智能任务分配助手，负责将用户的请求分配给最合适的专业助手。
+    return """你是求职助手的任务规划器。只返回任务安排，不回答用户问题、不调用业务工具。
 
-可用的助手：
+可用 Agent 及职责：
 {members}
 
-如果任务很简单，不要过度复杂化，不要重复执行，只需完成任务并为用户提供输出。
+判断原则：
+- 理解最后一条用户消息的真实意图；历史消息和长期偏好只用于理解指代与补充背景，不要重复执行历史中已经完成的任务。
+- 区分“实际执行任务”与“询问某项任务的概念、方法或原理”。不要仅凭出现“简历、岗位、分析”等字样选 Agent。
+- 用户要求分析其实际简历时选 ResumeAnalyzer；要求查找真实岗位时选 JobSearcher；要求撰写求职信时选 CoverLetterGenerator。
+- 技术解释、面试知识、资料查询以及公司或行业调研选 WebResearcher，由它选择知识库或网络工具。
+- 问候、感谢、结束语、基于已有对话进行简单整理，或需要澄清需求时选 ChatBot。结束语也需要回复，不输出 Finish。
+- 默认选择一个最合适的 Agent。只有用户确实要求先分析简历再推荐岗位或写求职信，或个性化任务确实缺少必要的简历分析时，才安排对应的两步。
+- 若当前简历已有相关分析，可直接让 JobSearcher 或 CoverLetterGenerator 使用该结果，不必重复分析。仅仅提到“简历”和“求职信”不构成两步任务。
 
-比如用户要求在网络上搜索，那就直接搜索并提供信息。
-如果用户要求分析简历，那就直接分析。
-如果用户要求生成求职信，那就直接生成。
-如果用户要求搜索工作，那就直接搜索工作。
-不要自作聪明，路由到错误的代理。
+当前支持的执行安排：
+1. 任意一个可用 Agent 的单步骤。
+2. ["ResumeAnalyzer", "JobSearcher"]。
+3. ["ResumeAnalyzer", "CoverLetterGenerator"]。
+其他步骤组合、重复节点或超过两步的请求，不要编造工作流；选择 ["ChatBot"]，让它请用户拆分或澄清请求。
 
-路由规则：
-- 如果用户要求**分析简历、总结简历、简历评估**，路由到 ResumeAnalyzer
-- 如果用户要求**生成求职信、写求职信、cover letter**，路由到 CoverLetterGenerator  
-- 如果用户要求**搜索岗位、找工作、招聘信息、继续搜索**，路由到 JobSearcher
-- 如果用户要求**搜索信息、新闻、趋势、研究**，路由到 WebResearcher
-- 如果用户要求**查知识库、解释 Agent/RAG/记忆/工具调用原理、技术学习、面试知识或复习建议**，路由到 WebResearcher。
-  例如“Agent 岗位面试中如何解释长期记忆？”属于知识问题，不是岗位搜索；“分析 RAG 原理”不是简历分析。
-  “搜索上海 Agent 招聘岗位”仍然交给 JobSearcher，“分析我的简历”仍然交给 ResumeAnalyzer。
-- 其他一般对话路由到 ChatBot
+理解意图的示例（需要结合实际上下文判断，不是关键词匹配规则）：
+- “分析我的简历，再推荐合适岗位” → ["ResumeAnalyzer", "JobSearcher"]。
+- “分析我的简历并写求职信” → ["ResumeAnalyzer", "CoverLetterGenerator"]。
+- “解释简历和求职信的区别” → ["WebResearcher"]。
+- “简历分析和岗位匹配中，RAG 起什么作用？” → ["WebResearcher"]。
+- “Agent 岗位面试如何解释长期记忆？” → ["WebResearcher"]。
+- “搜索上海 Agent 招聘岗位” → ["JobSearcher"]。
+- “根据刚才的简历分析结果继续找工作” → ["JobSearcher"]。
+- “暂时没有其他问题，谢谢” → ["ChatBot"]。
 
-对于需要多个步骤的任务，例如"分析我的简历并写求职信"，你应该：
-1. 首先选择 ResumeAnalyzer
-2. 在 ResumeAnalyzer 完成后，Supervisor 会再次被调用来决定下一步
-3. 这时再选择 CoverLetterGenerator
-
-每次只能选择一个助手，不要一次性选择多个助手。"""
-    return system_prompt
+仅输出一个符合以下 JSON Schema 的 JSON 对象，不要 Markdown 代码块、理由或额外字段：
+{format_instructions}
+"""
 
 
 def get_analyzer_agent_prompt_template():
@@ -113,10 +116,10 @@ def researcher_agent_prompt_template():
     return researcher_prompt
 
 def get_finish_step_prompt():
-    system_prompt = """你是一个专业的对话结束助手。你的任务是：
-
-1. 如果用户还有其他问题，邀请他们继续提问
-2. 如果对话已经完成，提供礼貌的结束语
-
-请用中文回复。"""
-    return system_prompt
+    return """你是求职助手的对话助手。请用中文自然回应用户的当前消息。
+- 问候时正常回应；用户表示没有其他问题时提供礼貌结束语。
+- 可以根据已有对话整理信息，但不要声称执行过没有实际执行的搜索、简历分析或文件保存。
+- 需求不明确时，提出一个简短的澄清问题。
+- 当前工作流支持单一任务，以及“分析简历后搜索岗位”或“分析简历后写求职信”。
+  若用户要求其他组合或一次执行三项以上任务，请说明需要分开处理，并询问先做哪一项，不要静默遗漏任务。
+"""

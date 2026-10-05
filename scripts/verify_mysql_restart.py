@@ -1,5 +1,7 @@
 """真实 MySQL + 独立 Python 进程验证；模型被替换，不消耗 API 额度。"""
 
+from schemas import RouteSchema
+
 import argparse
 import os
 import subprocess
@@ -71,7 +73,7 @@ def worker(phase, thread_id):
         return AIMessage(content="你的目标岗位是 Python 后端工程师。")
 
     supervisor = Mock()
-    supervisor.invoke.return_value = AIMessage(content="ChatBot")
+    supervisor.invoke.return_value = RouteSchema(steps=["ChatBot"])
     if phase == "recover":
         supervisor.invoke.side_effect = AssertionError("恢复不应重新执行已完成的 Supervisor")
     finish = Mock(invoke=answer)

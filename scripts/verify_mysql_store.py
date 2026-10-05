@@ -65,7 +65,7 @@ def worker(phase, user_id, thread_id):
                 return get_finish_chain(llm, memory_context=memory_context)
 
             with patch.object(agents, "init_chat_model", side_effect=[
-                FakeListChatModel(responses=["ChatBot"]), FakeListChatModel(responses=["已参考长期记忆。"])
+                FakeListChatModel(responses=['{"steps": ["ChatBot"]}']), FakeListChatModel(responses=["已参考长期记忆。"])
             ]), patch.object(agents, "get_finish_chain", side_effect=finish):
                 events = list(stream_conversation(graph, "请结合我的偏好给些建议。", [], {},
                                                   thread_id=thread_id, user_id=user_id))
