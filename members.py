@@ -24,7 +24,7 @@ def get_team_members_details() -> dict:
         },
         {
             "name": "WebResearcher",
-            "description": "Conducts online research to gather information from web.",
+            "description": "Answers technical learning and interview questions using the local Hello-Agents knowledge base; uses web search for current company, industry and news information.",
         },
         {
             "name": "ChatBot",

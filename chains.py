@@ -35,7 +35,8 @@ def get_supervisor_chain(llm: BaseChatModel, memory_context=""):
             - For resume analysis: ResumeAnalyzer
             - For job search: JobSearcher  
             - For cover letter: CoverLetterGenerator
-            - For web research: WebResearcher
+            - For web research, knowledge-base lookup, technical explanations or interview preparation: WebResearcher
+            - Agent/RAG interview questions are knowledge requests, not job searches or resume analysis.
             - For general chat: ChatBot
             - When done: Finish
             

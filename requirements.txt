@@ -16,3 +16,7 @@ pymupdf
 streamlit-analytics2
 python-docx
 asgiref
+qdrant-client>=1.14,<2
+langchain-text-splitters>=1.1,<2
+openai>=1.30,<4
+httpx>=0.27,<1

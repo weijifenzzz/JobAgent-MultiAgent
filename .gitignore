@@ -7,6 +7,9 @@
 # 临时文件、配置和个人简历
 temp/
 
+# 下载的第三方知识库正文；使用下载脚本重建
+data/knowledge/
+
 # IDE 和 Python 缓存
 .idea/
 __pycache__/

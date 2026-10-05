@@ -5,6 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 import os
+import re
 
 from langgraph.graph import StateGraph, END
 from langgraph.runtime import Runtime
@@ -20,6 +21,7 @@ from tools import (
     get_google_search_results, 
     save_cover_letter_for_specific_job,
     scrape_website,
+    search_knowledge_base,
 )
 from prompts import (
     get_analyzer_agent_prompt_template,
@@ -70,6 +72,20 @@ def memory_node(state: AgentState, runtime: Runtime[RunContext], config: Runnabl
         "messages": state["messages"] + [AIMessage(content=reply, name="MemoryManager")],
         "next_step": "__memory_done__", "task_completed": True, "needs_followup": "",
     }
+
+
+def _is_knowledge_question(text: str) -> bool:
+    """仅用于路由输出无效时的兜底；有效路由仍由 Supervisor 判断。"""
+    text = text.lower()
+    if any(word in text for word in ["分析我的简历", "总结我的简历", "评估我的简历", "求职信", "cover letter", "找工作", "招聘", "job postings"]):
+        return False
+    if "知识库" in text or "hello-agents" in text:
+        return True
+    topic = any(word in text for word in ["智能体", "向量", "记忆", "上下文", "工具调用", "大模型", "提示词"])
+    topic = topic or bool(re.search(r"(?<![a-z0-9_])(agent|agents|rag|react|langgraph|embedding|mcp|llm)(?![a-z0-9_])", text))
+    question = any(word in text for word in ["什么", "如何", "怎么", "区别", "解释", "原理", "学习", "面试", "复习", "评估", "分析"])
+    question = question or bool(re.search(r"\b(what|how|explain|difference|interview|learn)\b", text))
+    return topic and question
 
 
 def supervisor_node(state: AgentState, runtime: Runtime[RunContext]):
@@ -127,7 +143,9 @@ def supervisor_node(state: AgentState, runtime: Runtime[RunContext]):
         # 验证输出
         valid_agents = ["ResumeAnalyzer", "CoverLetterGenerator", "JobSearcher", "WebResearcher", "ChatBot", "Finish"]
         if next_action not in valid_agents:
-            if any(word in user_lower for word in ["简历", "resume", "分析"]):
+            if _is_knowledge_question(user_lower):
+                next_action = "WebResearcher"
+            elif any(word in user_lower for word in ["简历", "resume", "分析"]):
                 next_action = "ResumeAnalyzer"
             elif any(word in user_lower for word in ["岗位", "job", "工作"]):
                 next_action = "JobSearcher"
@@ -288,12 +306,12 @@ def job_search_node(state: AgentState, runtime: Runtime[RunContext]):
 
 def web_research_node(state: AgentState, runtime: Runtime[RunContext]):
     """
-    网络研究节点 - 支持协作模式
+    资料研究节点：根据问题选择本地知识库或网络工具。
     """
     llm = init_chat_model(runtime.context.model_config)
     
     research_agent = create_agent(
-        llm, [get_google_search_results, scrape_website], 
+        llm, [search_knowledge_base, get_google_search_results, scrape_website],
         system_prompt=researcher_agent_prompt_template() + memory_context(runtime)
     )
     
